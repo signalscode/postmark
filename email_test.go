@@ -3,82 +3,108 @@ package postmark
 import (
 	"context"
 	"net/http"
-	"testing"
-
-	"goji.io/pat"
 )
 
-var testEmail = Email{
-	From:     "sender@example.com",
-	To:       "receiver@example.com",
-	Cc:       "copied@example.com",
-	Bcc:      "blank-copied@example.com",
-	Subject:  "Test",
-	Tag:      "Invitation",
-	HTMLBody: "<b>Hello</b>",
-	TextBody: "Hello",
-	ReplyTo:  "reply@example.com",
-	Headers: []Header{
-		{
-			Name:  "CUSTOM-HEADER",
-			Value: "value",
+func getTestEmail() Email {
+	return Email{
+		From:     testSenderEmail,
+		To:       "receiver@example.com",
+		Cc:       "copied@example.com",
+		Bcc:      "blank-copied@example.com",
+		Subject:  "Test",
+		Tag:      "Invitation",
+		HTMLBody: "<b>Hello</b>",
+		TextBody: "Hello",
+		ReplyTo:  "reply@example.com",
+		Headers: []Header{
+			{
+				Name:  "CUSTOM-HEADER",
+				Value: "value",
+			},
 		},
-	},
-	TrackOpens: true,
-	Attachments: []Attachment{
-		{
-			Name:        "readme.txt",
-			Content:     "dGVzdCBjb250ZW50",
-			ContentType: "text/plain",
+		TrackOpens: true,
+		InlineCSS:  true,
+		Attachments: []Attachment{
+			{
+				Name:        "readme.txt",
+				Content:     "dGVzdCBjb250ZW50",
+				ContentType: "text/plain",
+			},
+			{
+				Name:        "report.pdf",
+				Content:     "dGVzdCBjb250ZW50",
+				ContentType: "application/octet-stream",
+			},
 		},
-		{
-			Name:        "report.pdf",
-			Content:     "dGVzdCBjb250ZW50",
-			ContentType: "application/octet-stream",
-		},
-	},
-}
-
-func TestSendEmail(t *testing.T) {
-	responseJSON := `{
-		"To": "receiver@example.com",
-		"SubmittedAt": "2014-02-17T07:25:01.4178645-05:00",
-		"MessageID": "0a129aee-e1cd-480d-b08d-4f48548ff48d",
-		"ErrorCode": 0,
-		"Message": "OK"
-	}`
-
-	tMux.HandleFunc(pat.Post("/email"), func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(responseJSON))
-	})
-
-	// Success
-	res, err := client.SendEmail(context.Background(), testEmail)
-	if err != nil {
-		t.Fatalf("SendEmail: %s", err.Error())
-	}
-
-	if res.MessageID != "0a129aee-e1cd-480d-b08d-4f48548ff48d" {
-		t.Fatalf("SendEmail: wrong id!")
-	}
-
-	// Failure
-	responseJSON = `{
-		"To": "receiver@example.com",
-		"SubmittedAt": "2014-02-17T07:25:01.4178645-05:00",
-		"MessageID": "0a129aee-e1cd-480d-b08d-4f48548ff48d",
-		"ErrorCode": 401,
-		"Message": "Sender signature not confirmed"
-	}`
-
-	_, err = client.SendEmail(context.Background(), testEmail)
-
-	if err == nil {
-		t.Fatalf("SendEmail should have failed")
 	}
 }
 
-func TestSendEmailBatch(t *testing.T) {
+func (s *PostmarkTestSuite) TestSendEmail() {
+	tests := []struct {
+		name         string
+		responseJSON string
+		wantErr      bool
+		expectedID   string
+		statusCode   int
+	}{
+		{
+			name: "successful email send",
+			responseJSON: `{
+				"To": "receiver@example.com",
+				"SubmittedAt": "2014-02-17T07:25:01.4178645-05:00",
+				"MessageID": "0a129aee-e1cd-480d-b08d-4f48548ff48d",
+				"ErrorCode": 0,
+				"Message": "OK"
+			}`,
+			wantErr:    false,
+			expectedID: "0a129aee-e1cd-480d-b08d-4f48548ff48d",
+			statusCode: http.StatusOK,
+		},
+		{
+			name: "email send failure with error code",
+			responseJSON: `{
+				"To": "receiver@example.com",
+				"SubmittedAt": "2014-02-17T07:25:01.4178645-05:00",
+				"MessageID": "0a129aee-e1cd-480d-b08d-4f48548ff48d",
+				"ErrorCode": 401,
+				"Message": "Sender signature not confirmed"
+			}`,
+			wantErr:    true,
+			statusCode: http.StatusOK,
+		},
+		{
+			name: "email send HTTP error",
+			responseJSON: `{
+				"ErrorCode": 500,
+				"Message": "Internal Server Error"
+			}`,
+			wantErr:    true,
+			statusCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.mux.Post("/email", func(w http.ResponseWriter, _ *http.Request) {
+				if tt.statusCode != http.StatusOK {
+					w.WriteHeader(tt.statusCode)
+				}
+				_, _ = w.Write([]byte(tt.responseJSON))
+			})
+
+			res, err := s.client.SendEmail(context.Background(), getTestEmail())
+
+			if tt.wantErr {
+				s.Require().Error(err, "SendEmail should have failed")
+			} else {
+				s.Require().NoError(err, "SendEmail should not have failed")
+				s.Equal(tt.expectedID, res.MessageID, "SendEmail returned wrong message ID")
+			}
+		})
+	}
+}
+
+func (s *PostmarkTestSuite) TestSendEmailBatch() {
 	responseJSON := `[
 	  {
 		"ErrorCode": 0,
@@ -96,16 +122,12 @@ func TestSendEmailBatch(t *testing.T) {
 	  }
 	]`
 
-	tMux.HandleFunc(pat.Post("/email/batch"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Post("/email/batch", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	res, err := client.SendEmailBatch(context.Background(), []Email{testEmail, testEmail})
-	if err != nil {
-		t.Fatalf("SendEmailBatch: %s", err.Error())
-	}
-
-	if len(res) != 2 {
-		t.Fatalf("SendEmailBatch: wrong response array size!")
-	}
+	testEmail := getTestEmail()
+	res, err := s.client.SendEmailBatch(context.Background(), []Email{testEmail, testEmail})
+	s.Require().NoError(err, "SendEmailBatch should not have failed")
+	s.Len(res, 2, "SendEmailBatch should return 2 results")
 }

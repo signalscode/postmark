@@ -4,16 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"testing"
-
-	"goji.io/pat"
+	"net/http/httptest"
 )
 
 const (
 	outbound = "outbound"
 )
 
-func TestGetWebhooks(t *testing.T) {
+func (s *PostmarkTestSuite) TestGetWebhooks() {
 	responseJSON := `{
 		"Webhooks": [
 			{
@@ -95,24 +93,39 @@ func TestGetWebhooks(t *testing.T) {
 		]
 	}`
 
-	tMux.HandleFunc(pat.Get("/webhooks"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/webhooks", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	res, err := client.ListWebhooks(context.Background(), "")
-	if err != nil {
-		t.Fatalf("Webhook: %s", err.Error())
-	}
+	res, err := s.client.ListWebhooks(context.Background(), "")
+	s.Require().NoError(err)
 
-	if len(res) != 2 {
-		t.Fatalf("Webhook: wrong number of webhooks listed!")
-	}
-	if res[0].ID != 1234567 || res[1].ID != 1234568 {
-		t.Fatalf("Webhook: wrong ID!")
-	}
+	s.Len(res, 2, "Webhook: wrong number of webhooks listed")
+	s.Equal(int(1234567), res[0].ID, "Webhook: wrong first webhook ID")
+	s.Equal(int(1234568), res[1].ID, "Webhook: wrong second webhook ID")
 }
 
-func TestGetWebhook(t *testing.T) {
+func (s *PostmarkTestSuite) TestListWebhooksError() {
+	// Create a new mux for this specific test to avoid conflicts
+	errorMux := NewTestRouter()
+	errorServer := httptest.NewServer(errorMux)
+	defer errorServer.Close()
+
+	// Create a new client for this test
+	errorClient := NewClient("server-token", "account-token")
+	errorClient.BaseURL = errorServer.URL
+
+	errorMux.Get("/webhooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"ErrorCode": 500, "Message": "Internal Server Error"}`))
+	})
+
+	res, err := errorClient.ListWebhooks(context.Background(), "")
+	s.Require().Error(err, "ListWebhooks should fail")
+	s.Nil(res, "ListWebhooks should return nil on error")
+}
+
+func (s *PostmarkTestSuite) TestGetWebhook() {
 	responseJSON := `{
 		"ID": 1234567,
 		"Url": "http://www.example.com/webhook-test-tracking",
@@ -152,30 +165,20 @@ func TestGetWebhook(t *testing.T) {
 		}
 	}`
 
-	tMux.HandleFunc(pat.Get("/webhooks/:webhookID"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/webhooks/:webhookID", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	res, err := client.GetWebhook(context.Background(), 1234567)
-	if err != nil {
-		t.Fatalf("Webhook: %s", err.Error())
-	}
+	res, err := s.client.GetWebhook(context.Background(), 1234567)
+	s.Require().NoError(err)
 
-	if res.ID != 1234567 {
-		t.Fatalf("Webhook: wrong ID!")
-	}
-	if res.MessageStream != outbound {
-		t.Fatalf("Webhook: wrong message stream!")
-	}
-	if res.HTTPHeaders[0].Name != "name" {
-		t.Fatalf("Webhook: wrong HTTpHeaders!")
-	}
-	if !res.Triggers.SubscriptionChange.Enabled {
-		t.Fatalf("Webhook: wrong Subscription Change trigger state!")
-	}
+	s.Equal(int(1234567), res.ID, "Webhook: wrong ID")
+	s.Equal(outbound, res.MessageStream, "Webhook: wrong message stream")
+	s.Equal("name", res.HTTPHeaders[0].Name, "Webhook: wrong HTTP Headers")
+	s.True(res.Triggers.SubscriptionChange.Enabled, "Webhook: wrong Subscription Change trigger state")
 }
 
-func TestCreateWebhook(t *testing.T) {
+func (s *PostmarkTestSuite) TestCreateWebhook() {
 	webhook := Webhook{
 		URL:           "http://www.example.com/webhook-test-tracking",
 		MessageStream: outbound,
@@ -202,51 +205,35 @@ func TestCreateWebhook(t *testing.T) {
 		},
 	}
 
-	tMux.HandleFunc(pat.Post("/webhooks"), func(w http.ResponseWriter, req *http.Request) {
+	s.mux.Post("/webhooks", func(w http.ResponseWriter, req *http.Request) {
 		decoder := json.NewDecoder(req.Body)
 
 		var res Webhook
 		err := decoder.Decode(&res)
 		_ = req.Body.Close()
 
-		if err != nil {
-			t.Fatalf("Webhook: %s", err.Error())
-		}
+		s.NoError(err, "Failed to decode webhook request")
 
-		if res.MessageStream != outbound {
-			t.Fatalf("Webhook: wrong message stream!")
-		}
-		if !res.Triggers.Open.Enabled {
-			t.Fatalf("Webhook: wrong Open trigger state!")
-		}
+		s.Equal(outbound, res.MessageStream, "Webhook: wrong message stream")
+		s.True(res.Triggers.Open.Enabled, "Webhook: wrong Open trigger state")
 
 		res.ID = 12345
 
 		resBytes, err := json.Marshal(res)
-		if err != nil {
-			t.Fatalf("Webhook: %s", err.Error())
-		}
+		s.NoError(err, "Failed to marshal webhook response")
 
 		_, _ = w.Write(resBytes)
 	})
 
-	res, err := client.CreateWebhook(context.Background(), webhook)
-	if err != nil {
-		t.Fatalf("Webhook: %s", err.Error())
-	}
+	res, err := s.client.CreateWebhook(context.Background(), webhook)
+	s.Require().NoError(err)
 
-	if res.ID != 12345 {
-		t.Fatalf("Webhook: wrong ID!")
-	}
-	if res.MessageStream != outbound {
-		t.Fatalf("Webhook: wrong message stream!")
-	}
-	if !res.Triggers.Open.Enabled {
-		t.Fatalf("Webhook: wrong Open trigger state!")
-	}
+	s.Equal(int(12345), res.ID, "Webhook: wrong ID")
+	s.Equal(outbound, res.MessageStream, "Webhook: wrong message stream")
+	s.True(res.Triggers.Open.Enabled, "Webhook: wrong Open trigger state")
 }
 
-func TestEditWebhook(t *testing.T) {
+func (s *PostmarkTestSuite) TestEditWebhook() {
 	webhook := Webhook{
 		URL:           "http://www.example.com/webhook-test-tracking",
 		MessageStream: outbound,
@@ -273,65 +260,47 @@ func TestEditWebhook(t *testing.T) {
 		},
 	}
 
-	tMux.HandleFunc(pat.Put("/webhooks/:webhookID"), func(w http.ResponseWriter, req *http.Request) {
+	s.mux.Put("/webhooks/:webhookID", func(w http.ResponseWriter, req *http.Request) {
 		decoder := json.NewDecoder(req.Body)
 
 		var res Webhook
 		err := decoder.Decode(&res)
 		_ = req.Body.Close()
 
-		if err != nil {
-			t.Fatalf("Webhook: %s", err.Error())
-		}
+		s.NoError(err, "Failed to decode webhook request")
 
-		if res.MessageStream != outbound {
-			t.Fatalf("Webhook: wrong message stream!")
-		}
-		if !res.Triggers.Open.Enabled {
-			t.Fatalf("Webhook: wrong Open trigger state!")
-		}
+		s.Equal(outbound, res.MessageStream, "Webhook: wrong message stream")
+		s.True(res.Triggers.Open.Enabled, "Webhook: wrong Open trigger state")
 
 		res.ID = 12345
 
 		resBytes, err := json.Marshal(res)
-		if err != nil {
-			t.Fatalf("Webhook: %s", err.Error())
-		}
+		s.NoError(err, "Failed to marshal webhook response")
 
 		_, _ = w.Write(resBytes)
 	})
 
-	res, err := client.EditWebhook(context.Background(), 12345, webhook)
-	if err != nil {
-		t.Fatalf("Webhook: %s", err.Error())
-	}
+	res, err := s.client.EditWebhook(context.Background(), 12345, webhook)
+	s.Require().NoError(err)
 
-	if res.ID != 12345 {
-		t.Fatalf("Webhook: wrong ID!")
-	}
-	if res.MessageStream != outbound {
-		t.Fatalf("Webhook: wrong message stream!")
-	}
-	if !res.Triggers.Open.Enabled {
-		t.Fatalf("Webhook: wrong Open trigger state!")
-	}
+	s.Equal(int(12345), res.ID, "Webhook: wrong ID")
+	s.Equal(outbound, res.MessageStream, "Webhook: wrong message stream")
+	s.True(res.Triggers.Open.Enabled, "Webhook: wrong Open trigger state")
 }
 
-func TestDeleteWebhook(t *testing.T) {
+func (s *PostmarkTestSuite) TestDeleteWebhook() {
 	responseJSON := `{
 	  "ErrorCode": 0,
 	  "Message": "Webhook 1234 removed."
 	}`
 
-	tMux.HandleFunc(pat.Delete("/webhooks/:webhookID"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Delete("/webhooks/:webhookID", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
 	// Success
-	err := client.DeleteWebhook(context.Background(), 1234)
-	if err != nil {
-		t.Fatalf("DeleteWebhook: %s", err.Error())
-	}
+	err := s.client.DeleteWebhook(context.Background(), 1234)
+	s.Require().NoError(err)
 
 	// Failure
 	responseJSON = `{
@@ -339,8 +308,6 @@ func TestDeleteWebhook(t *testing.T) {
 	  "Message": "Invalid JSON"
 	}`
 
-	err = client.DeleteWebhook(context.Background(), 1234)
-	if err == nil {
-		t.Fatalf("DeleteWebhook: should have failed")
-	}
+	err = s.client.DeleteWebhook(context.Background(), 1234)
+	s.Require().Error(err, "DeleteWebhook: should have failed")
 }

@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	"goji.io/pat"
 )
 
-func TestGetOutboundMessage(t *testing.T) {
+func (s *PostmarkTestSuite) TestGetOutboundMessage() {
 	responseJSON := `{
 	  "TextBody": "Thank you for your order...",
 	  "HtmlBody": "<p>Thank you for your order...</p>",
@@ -63,36 +62,30 @@ func TestGetOutboundMessage(t *testing.T) {
 	  ]
 	}`
 
-	tMux.HandleFunc(pat.Get("/messages/outbound/07311c54-0687-4ab9-b034-b54b5bad88ba/details"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/messages/outbound/07311c54-0687-4ab9-b034-b54b5bad88ba/details", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	res, err := client.GetOutboundMessage(context.Background(), "07311c54-0687-4ab9-b034-b54b5bad88ba")
-	if err != nil {
-		t.Fatalf("GetOutboundMessage: %s", err.Error())
-	}
+	res, err := s.client.GetOutboundMessage(context.Background(), "07311c54-0687-4ab9-b034-b54b5bad88ba")
+	s.Require().NoError(err)
 
-	if res.MessageID != "07311c54-0687-4ab9-b034-b54b5bad88ba" {
-		t.Fatalf("GetOutboundMessage: wrong MessageID (%v)", res.MessageID)
-	}
+	s.Equal("07311c54-0687-4ab9-b034-b54b5bad88ba", res.MessageID, "GetOutboundMessage: wrong MessageID")
 }
 
-func TestGetOutboundMessageDump(t *testing.T) {
+func (s *PostmarkTestSuite) TestGetOutboundMessageDump() {
 	dump := `From: \"John Doe\" <john.doe@yahoo.com> \r\nTo: \"john.doe@yahoo.com\" <john.doe@yahoo.com>\r\nReply-To: joe@domain.com\r\nDate: Fri, 14 Feb 2014 11:12:56 -0500\r\nSubject: Parts Order #5454\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\nX-Mailer: aspNetEmail ver 4.0.0.22\r\nX-Job: 44013_34141\r\nX-virtual-MTA: shared1\r\nX-Complaints-To: abuse@postmarkapp.com\r\nX-PM-RCPT: |bTB8NDQwMTN8MzQxNDF8anBAd2lsZGJpdC5jb20=|\r\nX-PM-Tag: product-orders\r\nX-PM-Message-Id: 07311c54-0687-4ab9-b034-b54b5bad88ba\r\nMessage-ID: <SC-ORD-MAIL4390fbe08b95f4257984dcaed896b4730@SC-ORD-MAIL4>\r\n\r\nThank you for your order=2E=2E=2E\r\n`
 
 	responseJSON := fmt.Sprintf(`{"Body": "%s"}`, dump)
 
-	tMux.HandleFunc(pat.Get("/messages/outbound/07311c54-0687-4ab9-b034-b54b5bad88ba/dump"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/messages/outbound/07311c54-0687-4ab9-b034-b54b5bad88ba/dump", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	_, err := client.GetOutboundMessageDump(context.Background(), "07311c54-0687-4ab9-b034-b54b5bad88ba")
-	if err != nil {
-		t.Fatalf("GetOutboundMessageDump: %s", err.Error())
-	}
+	_, err := s.client.GetOutboundMessageDump(context.Background(), "07311c54-0687-4ab9-b034-b54b5bad88ba")
+	s.Require().NoError(err)
 }
 
-func TestGetOutboundMessages(t *testing.T) {
+func (s *PostmarkTestSuite) TestGetOutboundMessages() {
 	responseJSON := `{
 	  "TotalCount": 194,
 		"Messages": [
@@ -119,27 +112,23 @@ func TestGetOutboundMessages(t *testing.T) {
 		]
 	}`
 
-	tMux.HandleFunc(pat.Get("/messages/outbound"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/messages/outbound", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	_, total, err := client.GetOutboundMessages(context.Background(), 100, 0, map[string]interface{}{
-		"recipient": "john.doe@yahoo.com",
-		"tag":       "welcome",
-		"status":    "",
-		"todate":    "2015-01-12",
-		"fromdate":  "2015-01-01",
+	_, total, err := s.client.GetOutboundMessages(context.Background(), 100, 0, map[string]interface{}{
+		"recipient":     "john.doe@yahoo.com",
+		"tag":           "welcome",
+		"status":        "",
+		testToDateKey:   "2015-01-12",
+		testFromDateKey: "2015-01-01",
 	})
-	if err != nil {
-		t.Fatalf("GetOutboundMessages: %s", err.Error())
-	}
+	s.Require().NoError(err)
 
-	if total != 194 {
-		t.Fatalf("GetOutboundMessages: wrong total (%d)", total)
-	}
+	s.Equal(int64(194), total, "GetOutboundMessages: wrong total")
 }
 
-func TestGetOutboundMessagesOpens(t *testing.T) {
+func (s *PostmarkTestSuite) TestGetOutboundMessagesOpens() {
 	responseJSON := `{
 		"TotalCount": 1,
 		"Opens": [
@@ -176,23 +165,19 @@ func TestGetOutboundMessagesOpens(t *testing.T) {
 		]
 
 	}`
-	tMux.HandleFunc(pat.Get("/messages/outbound/opens"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/messages/outbound/opens", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	_, total, err := client.GetOutboundMessagesOpens(context.Background(), 100, 0, map[string]interface{}{
+	_, total, err := s.client.GetOutboundMessagesOpens(context.Background(), 100, 0, map[string]interface{}{
 		"recipient": "john.doe@yahoo.com",
 	})
-	if err != nil {
-		t.Fatalf("GetOutboundMessagesOpens: %s", err.Error())
-	}
+	s.Require().NoError(err)
 
-	if total != 1 {
-		t.Fatalf("GetOutboundMessagesOpens: wrong total (%d)", total)
-	}
+	s.Equal(int64(1), total, "GetOutboundMessagesOpens: wrong total")
 }
 
-func TestGetOutboundMessageOpens(t *testing.T) {
+func (s *PostmarkTestSuite) TestGetOutboundMessageOpens() {
 	responseJSON := `{
 		"TotalCount": 1,
 	  "Opens": [
@@ -228,16 +213,244 @@ func TestGetOutboundMessageOpens(t *testing.T) {
 	  ]
 	}`
 
-	tMux.HandleFunc(pat.Get("/messages/outbound/opens/927e56d4-dc66-4070-bbf0-1db76c2ae14b"), func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.Get("/messages/outbound/opens/927e56d4-dc66-4070-bbf0-1db76c2ae14b", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(responseJSON))
 	})
 
-	_, total, err := client.GetOutboundMessageOpens(context.Background(), "927e56d4-dc66-4070-bbf0-1db76c2ae14b", 100, 0)
-	if err != nil {
-		t.Fatalf("GetOutboundMessageOpens: %s", err.Error())
+	_, total, err := s.client.GetOutboundMessageOpens(context.Background(), "927e56d4-dc66-4070-bbf0-1db76c2ae14b", 100, 0)
+	s.Require().NoError(err)
+
+	s.Equal(int64(1), total, "GetOutboundMessageOpens: wrong total")
+}
+
+func (s *PostmarkTestSuite) TestGetOutboundMessagesClicks() {
+	responseJSON := `{
+	  "TotalCount": 1,
+	  "Clicks": [
+		{
+		  "RecordType": "Click",
+		  "ClickLocation": "HTML",
+		  "Client": {
+			"Name": "Chrome 34.0.1847.131",
+			"Company": "Google Inc.",
+			"Family": "Chrome"
+		  },
+		  "OS": {
+			"Name": "OS X 10.7 Lion",
+			"Company": "Apple Computer, Inc.",
+			"Family": "OS X"
+		  },
+		  "Platform": "Desktop",
+		  "UserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.131 Safari/537.36",
+		  "OriginalLink": "http://example.com/click-me",
+		  "Geo": {
+			"CountryISOCode": "RS",
+			"Country": "Serbia",
+			"RegionISOCode": "VO",
+			"Region": "Vojvodina",
+			"City": "Novi Sad",
+			"Zip": "21000",
+			"Coords": "45.2517,19.8369",
+			"IP": "188.2.95.4"
+		  },
+		  "MessageID": "927e56d4-dc66-4c01-a0be-645b4b6f5fd7",
+		  "MessageStream": "outbound",
+		  "ReceivedAt": "2014-02-14T11:13:10.8054242-05:00",
+		  "Tag": "Invitation",
+		  "Recipient": "john.doe@yahoo.com"
+		}
+	  ]
+	}`
+
+	s.mux.Get("/messages/outbound/clicks", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(responseJSON))
+	})
+
+	clicks, count, err := s.client.GetOutboundMessagesClicks(context.Background(), 100, 0, map[string]interface{}{
+		"tag":       "Invitation",
+		"recipient": "john.doe@yahoo.com",
+	})
+	s.Require().NoError(err)
+
+	s.EqualValues(1, count)
+	s.Len(clicks, 1)
+
+	click := clicks[0]
+	s.Equal("927e56d4-dc66-4c01-a0be-645b4b6f5fd7", click.MessageID, "GetOutboundMessagesClicks: wrong MessageID")
+	s.Equal("HTML", click.ClickLocation, "GetOutboundMessagesClicks: wrong ClickLocation")
+	s.Equal("Chrome 34.0.1847.131", click.Client["Name"], "GetOutboundMessagesClicks: wrong Client Name")
+	s.Equal("Google Inc.", click.Client["Company"], "GetOutboundMessagesClicks: wrong Client Company")
+	s.Equal("Chrome", click.Client["Family"], "GetOutboundMessagesClicks: wrong Client Family")
+	s.Equal("OS X 10.7 Lion", click.OS["Name"], "GetOutboundMessagesClicks: wrong OS Name")
+	s.Equal("http://example.com/click-me", click.OriginalLink, "GetOutboundMessagesClicks: wrong OriginalLink")
+	s.Equal("john.doe@yahoo.com", click.Recipient, "GetOutboundMessagesClicks: wrong Recipient")
+	s.Equal("Invitation", click.Tag, "GetOutboundMessagesClicks: wrong Tag")
+}
+
+func (s *PostmarkTestSuite) TestGetOutboundMessageClicks() {
+	responseJSON := `{
+	  "TotalCount": 2,
+	  "Clicks": [
+		{
+		  "RecordType": "Click",
+		  "ClickLocation": "HTML",
+		  "Client": {
+			"Name": "Chrome 34.0.1847.131",
+			"Company": "Google Inc.",
+			"Family": "Chrome"
+		  },
+		  "OS": {
+			"Name": "OS X 10.7 Lion",
+			"Company": "Apple Computer, Inc.",
+			"Family": "OS X"
+		  },
+		  "Platform": "Desktop",
+		  "UserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.131 Safari/537.36",
+		  "OriginalLink": "http://example.com/click-me",
+		  "Geo": {
+			"CountryISOCode": "RS",
+			"Country": "Serbia",
+			"RegionISOCode": "VO",
+			"Region": "Vojvodina",
+			"City": "Novi Sad",
+			"Zip": "21000",
+			"Coords": "45.2517,19.8369",
+			"IP": "188.2.95.4"
+		  },
+		  "MessageID": "927e56d4-dc66-4c01-a0be-645b4b6f5fd7",
+		  "MessageStream": "outbound",
+		  "ReceivedAt": "2014-02-14T11:13:10.8054242-05:00",
+		  "Tag": "Invitation",
+		  "Recipient": "john.doe@yahoo.com"
+		},
+		{
+		  "RecordType": "Click",
+		  "ClickLocation": "Text",
+		  "Client": {
+			"Name": "Safari 7.0.3",
+			"Company": "Apple Computer, Inc.",
+			"Family": "Safari"
+		  },
+		  "OS": {
+			"Name": "OS X 10.9 Mavericks",
+			"Company": "Apple Computer, Inc.",
+			"Family": "OS X"
+		  },
+		  "Platform": "Desktop",
+		  "UserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.75.14 (KHTML, like Gecko) Version/7.0.3 Safari/537.75.14",
+		  "OriginalLink": "http://example.com/another-link",
+		  "Geo": {
+			"CountryISOCode": "US",
+			"Country": "United States",
+			"RegionISOCode": "CA",
+			"Region": "California",
+			"City": "San Francisco",
+			"Zip": "94102",
+			"Coords": "37.7749,-122.4194",
+			"IP": "192.168.1.1"
+		  },
+		  "MessageID": "927e56d4-dc66-4c01-a0be-645b4b6f5fd7",
+		  "MessageStream": "outbound",
+		  "ReceivedAt": "2014-02-14T11:15:10.8054242-05:00",
+		  "Tag": "Invitation",
+		  "Recipient": "jane.doe@gmail.com"
+		}
+	  ]
+	}`
+
+	s.mux.Get("/messages/outbound/clicks/927e56d4-dc66-4c01-a0be-645b4b6f5fd7", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(responseJSON))
+	})
+
+	clicks, count, err := s.client.GetOutboundMessageClicks(context.Background(), "927e56d4-dc66-4c01-a0be-645b4b6f5fd7", 10, 0)
+	s.Require().NoError(err)
+
+	s.EqualValues(2, count)
+	s.Len(clicks, 2)
+
+	htmlClick := clicks[0]
+	s.Equal("927e56d4-dc66-4c01-a0be-645b4b6f5fd7", htmlClick.MessageID, "GetOutboundMessageClicks: wrong MessageID for HTML click")
+	s.Equal("HTML", htmlClick.ClickLocation, "GetOutboundMessageClicks: wrong ClickLocation for HTML click")
+	s.Equal("http://example.com/click-me", htmlClick.OriginalLink, "GetOutboundMessageClicks: wrong OriginalLink for HTML click")
+
+	textClick := clicks[1]
+	s.Equal("Text", textClick.ClickLocation, "GetOutboundMessageClicks: wrong ClickLocation for Text click")
+	s.Equal("http://example.com/another-link", textClick.OriginalLink, "GetOutboundMessageClicks: wrong OriginalLink for Text click")
+	s.Equal("jane.doe@gmail.com", textClick.Recipient, "GetOutboundMessageClicks: wrong Recipient for Text click")
+}
+
+// Benchmark for GetOutboundMessagesClicks
+func BenchmarkGetOutboundMessagesClicks(b *testing.B) {
+	mux := NewTestRouter()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient("server-token", "account-token")
+	client.BaseURL = server.URL
+
+	responseJSON := `{
+	  "TotalCount": 1,
+	  "Clicks": [
+		{
+		  "RecordType": "Click",
+		  "ClickLocation": "HTML",
+		  "OriginalLink": "http://example.com/click-me",
+		  "MessageID": "927e56d4-dc66-4c01-a0be-645b4b6f5fd7",
+		  "MessageStream": "outbound",
+		  "ReceivedAt": "2014-02-14T11:13:10.8054242-05:00",
+		  "Tag": "Invitation",
+		  "Recipient": "john.doe@example.com"
+		}
+	  ]
+	}`
+
+	mux.Get("/messages/outbound/clicks", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(responseJSON))
+	})
+
+	options := map[string]interface{}{
+		"tag":       "Invitation",
+		"recipient": "john.doe@example.com",
+		"platform":  "Desktop",
 	}
 
-	if total != 1 {
-		t.Fatalf("GetOutboundMessageOpens: wrong total (%d)", total)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = client.GetOutboundMessagesClicks(context.Background(), 100, 0, options)
+	}
+}
+
+// Benchmark for GetOutboundMessageClicks
+func BenchmarkGetOutboundMessageClicks(b *testing.B) {
+	mux := NewTestRouter()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient("server-token", "account-token")
+	client.BaseURL = server.URL
+
+	responseJSON := `{
+	  "TotalCount": 1,
+	  "Clicks": [
+		{
+		  "RecordType": "Click",
+		  "ClickLocation": "HTML",
+		  "OriginalLink": "http://example.com/click-me",
+		  "MessageID": "927e56d4-dc66-4c01-a0be-645b4b6f5fd7",
+		  "MessageStream": "outbound",
+		  "ReceivedAt": "2014-02-14T11:13:10.8054242-05:00",
+		  "Tag": "Invitation",
+		  "Recipient": "john.doe@example.com"
+		}
+	  ]
+	}`
+
+	mux.Get("/messages/outbound/clicks/927e56d4-dc66-4c01-a0be-645b4b6f5fd7", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(responseJSON))
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = client.GetOutboundMessageClicks(context.Background(), "927e56d4-dc66-4c01-a0be-645b4b6f5fd7", 50, 0)
 	}
 }

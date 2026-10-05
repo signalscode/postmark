@@ -2,9 +2,22 @@ package postmark
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 )
+
+// ErrHeaderInjection is returned when header injection is detected
+var ErrHeaderInjection = errors.New("header injection detected: illegal characters in template alias")
+
+// validateTemplateAlias checks for header injection attempts in template alias
+func validateTemplateAlias(alias string) error {
+	if strings.Contains(alias, "\r") || strings.Contains(alias, "\n") {
+		return ErrHeaderInjection
+	}
+	return nil
+}
 
 // Template represents an email template on the server
 type Template struct {
@@ -22,6 +35,12 @@ type Template struct {
 	AssociatedServerID int64 `json:"AssociatedServerId"`
 	// Active: Indicates that this template may be used for sending email.
 	Active bool
+	// Alias: Optional alias for the template.
+	Alias string `json:",omitempty"`
+	// TemplateType: Type of template (Standard or Layout)
+	TemplateType string `json:",omitempty"`
+	// LayoutTemplate: Layout template alias if using a layout
+	LayoutTemplate string `json:",omitempty"`
 }
 
 // TemplateInfo is a limited set of template info returned via Index/Editing endpoints
@@ -32,16 +51,18 @@ type TemplateInfo struct {
 	Name string
 	// Active: Indicates that this template may be used for sending email.
 	Active bool
+	// Alias: Optional alias for the template.
+	Alias string `json:",omitempty"`
+	// TemplateType: Type of template (Standard or Layout)
+	TemplateType string `json:",omitempty"`
+	// LayoutTemplate: Layout template alias if using a layout
+	LayoutTemplate string `json:",omitempty"`
 }
 
 // GetTemplate fetches a specific template via TemplateID
 func (client *Client) GetTemplate(ctx context.Context, templateID string) (Template, error) {
 	res := Template{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      fmt.Sprintf("templates/%s", templateID),
-		TokenType: serverToken,
-	}, &res)
+	err := client.get(ctx, fmt.Sprintf("templates/%s", templateID), &res)
 	return res, err
 }
 
@@ -52,61 +73,58 @@ type templatesResponse struct {
 
 // GetTemplates fetches a list of templates on the server
 // It returns a TemplateInfo slice, the total template count, and any error that occurred
-// Note: TemplateInfo only returns a subset of template attributes, use GetTemplate(id) to
+// TemplateInfo only returns a subset of template attributes, use GetTemplate(id) to
 // retrieve all template info.
-func (client *Client) GetTemplates(ctx context.Context, count int64, offset int64) ([]TemplateInfo, int64, error) {
+func (client *Client) GetTemplates(ctx context.Context, count, offset int64) ([]TemplateInfo, int64, error) {
+	return client.GetTemplatesFiltered(ctx, count, offset, "", "")
+}
+
+// GetTemplatesFiltered fetches a filtered list of templates on the server
+// templateType: filter by template type ("Standard", "Layout", or "" for all)
+// layoutTemplate: filter by layout template alias (or "" for all)
+func (client *Client) GetTemplatesFiltered(ctx context.Context, count, offset int64, templateType, layoutTemplate string) ([]TemplateInfo, int64, error) {
 	res := templatesResponse{}
 
 	values := &url.Values{}
 	values.Add("count", fmt.Sprintf("%d", count))
 	values.Add("offset", fmt.Sprintf("%d", offset))
 
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      fmt.Sprintf("templates?%s", values.Encode()),
-		TokenType: serverToken,
-	}, &res)
+	if templateType != "" {
+		values.Add("TemplateType", templateType)
+	}
+	if layoutTemplate != "" {
+		values.Add("LayoutTemplate", layoutTemplate)
+	}
+
+	err := client.get(ctx, buildURLWithQuery("templates", *values), &res)
 	return res.Templates, res.TotalCount, err
 }
 
 // CreateTemplate saves a new template to the server
 func (client *Client) CreateTemplate(ctx context.Context, template Template) (TemplateInfo, error) {
 	res := TemplateInfo{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "POST",
-		Path:      "templates",
-		Payload:   template,
-		TokenType: serverToken,
-	}, &res)
+	err := client.post(ctx, "templates", template, &res)
 	return res, err
 }
 
 // EditTemplate updates details for a specific template with templateID
 func (client *Client) EditTemplate(ctx context.Context, templateID string, template Template) (TemplateInfo, error) {
 	res := TemplateInfo{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "PUT",
-		Path:      fmt.Sprintf("templates/%s", templateID),
-		Payload:   template,
-		TokenType: serverToken,
-	}, &res)
+	err := client.put(ctx, fmt.Sprintf("templates/%s", templateID), template, &res)
 	return res, err
 }
 
 // DeleteTemplate removes a template (with templateID) from the server
 func (client *Client) DeleteTemplate(ctx context.Context, templateID string) error {
 	res := APIError{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "DELETE",
-		Path:      fmt.Sprintf("templates/%s", templateID),
-		TokenType: serverToken,
-	}, &res)
-
+	err := client.delete(ctx, fmt.Sprintf("templates/%s", templateID), &res)
+	if err != nil {
+		return err
+	}
 	if res.ErrorCode != 0 {
 		return res
 	}
-
-	return err
+	return nil
 }
 
 // ValidateTemplateBody contains the template/render model combination to be validated
@@ -144,12 +162,7 @@ type ValidationError struct {
 // ValidateTemplate validates the provided template/render model combination
 func (client *Client) ValidateTemplate(ctx context.Context, validateTemplateBody ValidateTemplateBody) (ValidateTemplateResponse, error) {
 	res := ValidateTemplateResponse{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "POST",
-		Path:      "templates/validate",
-		Payload:   validateTemplateBody,
-		TokenType: serverToken,
-	}, &res)
+	err := client.post(ctx, "templates/validate", validateTemplateBody, &res)
 	return res, err
 }
 
@@ -186,32 +199,71 @@ type TemplatedEmail struct {
 	// MessageStream: MessageStream will default to the outbound message stream ID (Default Transactional Stream) if no message stream ID is provided.
 	MessageStream string `json:",omitempty"`
 	// Metadata: Custom metadata key/value pairs.
-	Metadata map[string]interface{} `json:",omitempty"`
+	Metadata map[string]string `json:",omitempty"`
 }
 
 // SendTemplatedEmail sends an email using a template (TemplateID)
 func (client *Client) SendTemplatedEmail(ctx context.Context, email TemplatedEmail) (EmailResponse, error) {
+	// Validate TemplateAlias for header injection
+	if err := validateTemplateAlias(email.TemplateAlias); err != nil {
+		return EmailResponse{}, err
+	}
+
 	res := EmailResponse{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "POST",
-		Path:      "email/withTemplate",
-		Payload:   email,
-		TokenType: serverToken,
-	}, &res)
+	err := client.post(ctx, "email/withTemplate", email, &res)
 	return res, err
 }
 
 // SendTemplatedEmailBatch sends batch email using a template (TemplateID)
 func (client *Client) SendTemplatedEmailBatch(ctx context.Context, emails []TemplatedEmail) ([]EmailResponse, error) {
+	// Validate TemplateAlias for header injection in all emails
+	for i, email := range emails {
+		if err := validateTemplateAlias(email.TemplateAlias); err != nil {
+			return nil, fmt.Errorf("email %d: %w", i, err)
+		}
+	}
+
 	var res []EmailResponse
 	formatEmails := map[string]interface{}{
 		"Messages": emails,
 	}
-	err := client.doRequest(ctx, parameters{
-		Method:    "POST",
-		Path:      "email/batchWithTemplates",
-		Payload:   formatEmails,
-		TokenType: serverToken,
-	}, &res)
+	err := client.post(ctx, "email/batchWithTemplates", formatEmails, &res)
+	return res, err
+}
+
+// PushTemplatesRequest contains the request data for pushing templates between servers
+type PushTemplatesRequest struct {
+	// SourceServerID: ID of the server to push templates from
+	SourceServerID int64 `json:"SourceServerId"`
+	// DestinationServerID: ID of the server to push templates to
+	DestinationServerID int64 `json:"DestinationServerId"`
+	// PerformChanges: Whether to actually perform the push (true) or just simulate it (false)
+	PerformChanges bool `json:",omitempty"`
+}
+
+// PushedTemplate represents a template that was pushed between servers
+type PushedTemplate struct {
+	// TemplateID: ID of the template
+	TemplateID int64 `json:"TemplateId"`
+	// Name: Name of the template
+	Name string
+	// Alias: Alias of the template (if any)
+	Alias string
+	// Action: Action performed (Created, Updated, Skipped, etc.)
+	Action string
+}
+
+// PushTemplatesResponse contains the results of pushing templates between servers
+type PushTemplatesResponse struct {
+	// TotalCount: Total number of templates processed
+	TotalCount int64
+	// Templates: Details of each template that was processed
+	Templates []PushedTemplate
+}
+
+// PushTemplates pushes templates from one server to another
+func (client *Client) PushTemplates(ctx context.Context, request PushTemplatesRequest) (PushTemplatesResponse, error) {
+	res := PushTemplatesResponse{}
+	err := client.putWithAccountToken(ctx, "templates/push", request, &res)
 	return res, err
 }

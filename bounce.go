@@ -2,9 +2,7 @@ package postmark
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/url"
 	"time"
 )
 
@@ -30,17 +28,14 @@ type DeliveryStats struct {
 // GetDeliveryStats returns delivery stats for the server
 func (client *Client) GetDeliveryStats(ctx context.Context) (DeliveryStats, error) {
 	res := DeliveryStats{}
-	path := "deliverystats"
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      path,
-		TokenType: serverToken,
-	}, &res)
+	err := client.get(ctx, "deliverystats", &res)
 	return res, err
 }
 
 // Bounce represents a specific delivery failure
 type Bounce struct {
+	// RecordType: Type of record (bounce)
+	RecordType string
 	// ID: ID of bounce
 	ID int64
 	// Type: Bounce type
@@ -53,6 +48,8 @@ type Bounce struct {
 	Tag string
 	// MessageID: ID of message
 	MessageID string
+	// MessageStream: Message stream ID
+	MessageStream string
 	// Description: Description of bounce
 	Description string
 	// Details: Details on the bounce
@@ -69,6 +66,8 @@ type Bounce struct {
 	CanActivate bool
 	// Subject: Email subject
 	Subject string
+	// Content: Raw email content
+	Content string
 }
 
 type bouncesResponse struct {
@@ -79,36 +78,24 @@ type bouncesResponse struct {
 // GetBounces returns bounces for the server
 // It returns a Bounce slice, the total bounce count, and any error that occurred
 // Available options: http://developer.postmarkapp.com/developer-api-bounce.html#bounces
-func (client *Client) GetBounces(ctx context.Context, count int64, offset int64, options map[string]interface{}) ([]Bounce, int64, error) {
+func (client *Client) GetBounces(ctx context.Context, count, offset int64, options map[string]interface{}) ([]Bounce, int64, error) {
 	res := bouncesResponse{}
 
-	values := &url.Values{}
-	values.Add("count", fmt.Sprintf("%d", count))
-	values.Add("offset", fmt.Sprintf("%d", offset))
-
-	for k, v := range options {
-		values.Add(k, fmt.Sprintf("%v", v))
+	if options == nil {
+		options = make(map[string]interface{})
 	}
 
-	path := fmt.Sprintf("bounces?%s", values.Encode())
+	options["count"] = count
+	options["offset"] = offset
 
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      path,
-		TokenType: serverToken,
-	}, &res)
+	err := client.get(ctx, buildURL("bounces", options), &res)
 	return res.Bounces, res.TotalCount, err
 }
 
 // GetBounce fetches a single bounce with bounceID
 func (client *Client) GetBounce(ctx context.Context, bounceID int64) (Bounce, error) {
 	res := Bounce{}
-	path := fmt.Sprintf("bounces/%v", bounceID)
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      path,
-		TokenType: serverToken,
-	}, &res)
+	err := client.get(ctx, fmt.Sprintf("bounces/%v", bounceID), &res)
 	return res, err
 }
 
@@ -119,12 +106,7 @@ type dumpResponse struct {
 // GetBounceDump fetches an SMTP data dump for a single bounce
 func (client *Client) GetBounceDump(ctx context.Context, bounceID int64) (string, error) {
 	res := dumpResponse{}
-	path := fmt.Sprintf("bounces/%v/dump", bounceID)
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      path,
-		TokenType: serverToken,
-	}, &res)
+	err := client.get(ctx, fmt.Sprintf("bounces/%v/dump", bounceID), &res)
 	return res.Body, err
 }
 
@@ -138,37 +120,13 @@ type activateBounceResponse struct {
 // TODO: clarify this with Postmark
 func (client *Client) ActivateBounce(ctx context.Context, bounceID int64) (Bounce, string, error) {
 	res := activateBounceResponse{}
-	path := fmt.Sprintf("bounces/%v/activate", bounceID)
-	err := client.doRequest(ctx, parameters{
-		Method:    "PUT",
-		Path:      path,
-		TokenType: serverToken,
-	}, &res)
+	err := client.put(ctx, fmt.Sprintf("bounces/%v/activate", bounceID), nil, &res)
 	return res.Bounce, res.Message, err
-}
-
-type bouncedTagsResponse struct {
-	Tags []string `json:"tags"`
 }
 
 // GetBouncedTags retrieves a list of tags that have generated bounced emails
 func (client *Client) GetBouncedTags(ctx context.Context) ([]string, error) {
-	var raw json.RawMessage
-	path := "bounces/tags"
-	err := client.doRequest(ctx, parameters{
-		Method:    "GET",
-		Path:      path,
-		TokenType: serverToken,
-	}, &raw)
-	if err != nil {
-		return []string{}, err
-	}
-
-	// PM returns this payload in an impossible to unmarshal way
-	// ["tag1","tag2","tag3"]. So let's rejigger it to make it possible.
-	jsonString := fmt.Sprintf(`{"tags": %s}`, string(raw))
-	res := bouncedTagsResponse{}
-	err = json.Unmarshal([]byte(jsonString), &res)
-
-	return res.Tags, err
+	var res []string
+	err := client.get(ctx, "bounces/tags", &res)
+	return res, err
 }

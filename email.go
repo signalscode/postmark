@@ -2,6 +2,7 @@ package postmark
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -38,6 +39,8 @@ type Email struct {
 	Metadata map[string]string `json:",omitempty"`
 	// MessageStream: MessageStream will default to the outbound message stream ID (Default Transactional Stream) if no message stream ID is provided.
 	MessageStream string `json:",omitempty"`
+	// InlineCSS: By default, if the HTML body contains CSS, we will apply the style blocks as inline attributes. Set to false to opt out.
+	InlineCSS bool `json:",omitempty"`
 }
 
 // Header - an email header
@@ -60,6 +63,9 @@ type Attachment struct {
 	ContentID string `json:",omitempty"`
 }
 
+// ErrEmailFailed is returned when email sending fails
+var ErrEmailFailed = errors.New("email send failed")
+
 // EmailResponse holds info in response to a send/send-batch request
 // Even if API request comes back successful, check the ErrorCode to see if there might be a delivery problem
 type EmailResponse struct {
@@ -78,30 +84,23 @@ type EmailResponse struct {
 // SendEmail sends, well, an email.
 func (client *Client) SendEmail(ctx context.Context, email Email) (EmailResponse, error) {
 	res := EmailResponse{}
-	err := client.doRequest(ctx, parameters{
-		Method:    "POST",
-		Path:      "email",
-		Payload:   email,
-		TokenType: serverToken,
-	}, &res)
-
-	if res.ErrorCode != 0 {
-		return res, fmt.Errorf(`%v %s`, res.ErrorCode, res.Message)
+	err := client.post(ctx, "email", email, &res)
+	if err != nil {
+		return res, err
 	}
 
-	return res, err
+	if res.ErrorCode != 0 {
+		return res, fmt.Errorf("%w: %v %s", ErrEmailFailed, res.ErrorCode, res.Message)
+	}
+
+	return res, nil
 }
 
 // SendEmailBatch sends multiple emails together
-// Note, individual emails in the batch can error, so it would be wise to
+// Individual emails in the batch can error, so it would be wise to
 // range over the responses and sniff for errors
 func (client *Client) SendEmailBatch(ctx context.Context, emails []Email) ([]EmailResponse, error) {
 	var res []EmailResponse
-	err := client.doRequest(ctx, parameters{
-		Method:    "POST",
-		Path:      "email/batch",
-		Payload:   emails,
-		TokenType: serverToken,
-	}, &res)
+	err := client.post(ctx, "email/batch", emails, &res)
 	return res, err
 }

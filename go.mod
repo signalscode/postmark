@@ -1,5 +1,7 @@
 module github.com/mrz1836/postmark
 
-go 1.18
+go 1.23
 
-require goji.io v2.0.2+incompatible
+require github.com/stretchr/testify v1.12.1
+
+require go.yaml.in/yaml/v3 v3.0.5 // indirect
